@@ -19,12 +19,12 @@ class SimpleBayesClassifier:
         None: This method does not return anything as it is a constructor.
         """
 
-        self.n_pos =
-        self.n_neg =
-        self.prior_pos = 
-        self.prior_neg =
+        self.n_pos = n_pos
+        self.n_neg = n_neg
+        self.prior_pos = n_pos / (n_pos + n_neg)
+        self.prior_neg = n_neg / (n_pos + n_neg)
 
-    def fit_params(self, x, y, n_bins = 10):
+    def fit_params(self, x, y, n_bins = 10, alpha=1e-6):
 
         """
         Computes histogram-based parameters for each feature in the dataset.
@@ -39,12 +39,32 @@ class SimpleBayesClassifier:
         one for 'stay' parameters and one for 'leave' parameters.
         Each tuple in the list contains the bins and edges of the histogram for a feature.
         """
+        def calculate_histogram_params(x, n_bins, is_stay=True, alpha=1e-6):
+            x = x[~np.isnan(x)]
+            bin_edges = np.linspace(x.min(), x.max(), n_bins-1)
+            # make sure your first bin should cover -inf and the last bin should cover inf
+            bin_edges = np.insert(bin_edges, 0, -np.inf)
+            bin_edges = np.insert(bin_edges, len(bin_edges), np.inf)
+            bin_idx = np.digitize(x, bin_edges)
+            
+            # count the number of data points in each bin
+            hist = np.bincount(bin_idx)[1:]
+
+            # calculate the probability of each bin
+            prior = self.prior_pos if is_stay else self.prior_neg
+            hist = (hist + (alpha * prior)) / (hist.sum() + (2 * alpha))
+            return hist, bin_edges
 
         self.stay_params = [(None, None) for _ in range(x.shape[1])]
         self.leave_params = [(None, None) for _ in range(x.shape[1])]
 
-        # INSERT CODE HERE
-        
+        x_stay = x[y == 0]
+        x_leave = x[y == 1]
+
+        for i in range(x.shape[1]):
+            self.stay_params[i] = calculate_histogram_params(x_stay[:, i], n_bins, True, alpha)
+            self.leave_params[i] = calculate_histogram_params(x_leave[:, i], n_bins, False, alpha)
+
         return self.stay_params, self.leave_params
 
     def predict(self, x, thresh = 0):
@@ -61,10 +81,23 @@ class SimpleBayesClassifier:
         """
 
         y_pred = []
+        for i in range(x.shape[0]):
+            log_prob_stay = np.log(self.prior_neg)
+            log_prob_leave = np.log(self.prior_pos)
+            for j in range(x.shape[1]):
+                if np.isnan(x[i, j]):
+                    continue
+                hist_stay, bin_edges_stay = self.stay_params[j]
+                hist_leave, bin_edges_leave = self.leave_params[j]
 
-        # INSERT CODE HERE
-
-        return y_pred
+                bin_idx_stay = np.digitize(x[i, j], bin_edges_stay) - 1
+                bin_idx_leave = np.digitize(x[i, j], bin_edges_leave) - 1
+                
+                log_prob_stay += np.log(hist_stay[bin_idx_stay])
+                log_prob_leave += np.log(hist_leave[bin_idx_leave])
+                
+            y_pred.append(1 if log_prob_leave - log_prob_stay > thresh else 0)
+        return np.array(y_pred)
     
     def fit_gaussian_params(self, x, y):
 
@@ -84,7 +117,12 @@ class SimpleBayesClassifier:
         self.gaussian_stay_params = [(0, 0) for _ in range(x.shape[1])]
         self.gaussian_leave_params = [(0, 0) for _ in range(x.shape[1])]
 
-        # INSERT CODE HERE
+        x_stay = x[y == 0]
+        x_leave = x[y == 1]
+
+        for i in range(x.shape[1]):
+            self.gaussian_stay_params[i] = (np.nanmean(x_stay[:, i]), np.nanstd(x_stay[:, i]))
+            self.gaussian_leave_params[i] = (np.nanmean(x_leave[:, i]), np.nanstd(x_leave[:, i]))
         
         return self.gaussian_stay_params, self.gaussian_leave_params
     
@@ -103,6 +141,16 @@ class SimpleBayesClassifier:
 
         y_pred = []
 
-        # INSERT CODE HERE
+        for i in range(x.shape[0]):
+            log_prob_stay = np.log(self.prior_neg)
+            log_prob_leave = np.log(self.prior_pos)
+            for j in range(x.shape[1]):
+                if np.isnan(x[i, j]):
+                    continue
+                mean_stay, std_stay = self.gaussian_stay_params[j]
+                mean_leave, std_leave = self.gaussian_leave_params[j]
+                log_prob_stay += np.log(stats.norm(mean_stay, std_stay).pdf(x[i, j]))
+                log_prob_leave += np.log(stats.norm(mean_leave, std_leave).pdf(x[i, j]))
+            y_pred.append(1 if log_prob_leave - log_prob_stay > thresh else 0)
 
-        return y_pred
+        return np.array(y_pred)
